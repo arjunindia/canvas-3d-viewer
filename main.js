@@ -121,7 +121,7 @@ function isFrontFacing(polygon,delta) {
     
     const dot = normal.x * cameraDir.x + normal.y * cameraDir.y + normal.z * cameraDir.z;
     // return dot < 0;  // Negative = front-facing (normal towards camera) (too harsh)
-    return dot >0.005;
+    return dot >0.002;
 }
 
 
