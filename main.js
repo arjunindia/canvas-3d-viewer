@@ -5,13 +5,13 @@ const canvas = display;
 const width = canvas.width;
 const height = canvas.height;
 
-let pageZoom = 1
+let pageZoom = window.devicePixelRatio || 1;
 const clipZ = 0.5
 const project3dPoint = ({ x, y, z }) => {
   const clippedZ = Math.max(z,clipZ)
     return {
-        x:  0.03 *x / clippedZ,
-        y:  0.03*y / clippedZ
+        x:  x / clippedZ,
+        y:  y / clippedZ
     }
 
 }
@@ -48,8 +48,11 @@ function rotate_axis(point, axis, angle) {
 }
 
 
-const transposeZ = (point, delta = 0.0001) => {
-    return { x: point.x, y: point.y, z: 0 };
+const transposeZ = (point, delta = 120) => {
+    return { x: point.x, y: point.y, z: point.z + delta };
+}
+const transposeY = (point, delta = 200) => {
+    return { x: point.x, y: point.y + delta, z: point.z };
 }
 
 // const points = [
@@ -121,25 +124,26 @@ function isFrontFacing(polygon,delta) {
     
     const dot = normal.x * cameraDir.x + normal.y * cameraDir.y + normal.z * cameraDir.z;
     // return dot < 0;  // Negative = front-facing (normal towards camera) (too harsh)
-    return dot >0.002;
+    return dot <= 0;  // Negative = front-facing (normal towards camera)
 }
 
 
-const stlData = await fetch('models/Utah_teapot_(solid).stl').then(res => res.arrayBuffer());
+const stlData = await fetch('models/low-poly-miku-hatsune.stl').then(res => res.arrayBuffer());
 const { points,connections,polygons } = parseSTL(stlData);
 
-polygons.forEach(polygon => {
-    polygon.rotatedPoints = polygon.points.map(index => {
-        let point = points[index];
-        point = rotate_axis(point, "y", 0.01);
-        return rotate_axis(point, "x", 0.01);
-    });
-});
-function getAverageZ(polygon) {
-    return polygon.rotatedPoints.reduce((sum, pt) => sum + pt.z, 0) / polygon.rotatedPoints.length;
-}
 
-const sortedPolygons = polygons.sort((a, b) => getAverageZ(b) - getAverageZ(a));
+// rotate the model to be upright, so 90 degrees around the x axis
+points.forEach((point, index) => {
+    let rotatedPoint = rotate_axis(point, "x", Math.PI / 2);
+    let transformedPoint = transposeY(rotatedPoint, -70);
+    points[index] = transformedPoint;
+});
+polygons.forEach((polygon) => {
+    let rotatedNormal = rotate_axis(polygon.normal, "x", Math.PI / 2);
+    let transformedNormal = rotate_axis(rotatedNormal, "y", 0);
+    polygon.normal = transformedNormal;
+});
+
 // const findClosedConnections = (connections) => {
 //     const visited = new Set();
 //     const polygons = [];
@@ -224,18 +228,37 @@ function draw(delta = 0.01) {
     //     ctx.lineTo(cartesianToJSCoordinate(projectedPointB).x, cartesianToJSCoordinate(projectedPointB).y);
     //     ctx.stroke();
     // }
-    // find closed connections using dfs and fill with gradient
-    // sort polygons by distance from camera such that polygons closer to camera are drawn first. Note, technically the polygon IS at 0,0 to facilitate rotation and is then translated to show on screen. So, the distance calculation should accomodate for this translation of the object being drawn.
+ // 1. Create a helper to get the 3D Z-depth (not 2D x/y)
+    const renderablePolygons = polygons.map(polygon => {
+        // A. Get original points
+        const originalPoints = polygon.points.map(index => points[index]);
 
+        // B. Apply Rotations (Must match exactly!)
+        let transformedPoints = originalPoints.map(point => rotate_axis(point, "y", delta));
+        // transformedPoints = transformedPoints.map(point => rotate_axis(point, "x", delta)); // Commented out to match your code
+
+        // C. Apply Z Translation (Camera move)
+        transformedPoints = transformedPoints.map(point => transposeZ(point));
+        // D. Calculate Average Z (Depth) of this transformed polygon
+        const avgZ = transformedPoints.reduce((acc, p) => acc + p.z, 0) / transformedPoints.length;
+
+        return {
+            originalPolygon: polygon, // Keep ref if needed
+            transformedPoints: transformedPoints, // STORE THIS so we don't recalculate
+            depth: avgZ
+        };
+    });
+   const sortedPolygons = renderablePolygons.toSorted((a, b) => b.depth - a.depth);
     for (let i = 0; i < sortedPolygons.length; i++) {
+        
         const polygon = sortedPolygons[i];
-        if(!isFrontFacing(polygon,delta)){ 
-            continue;
-        }
-        const pointsCurr = polygon.points.map(index => points[index]);
-        let rotatedPointsCurr = pointsCurr.map(point => rotate_axis(point, "y", delta))
-        rotatedPointsCurr = rotatedPointsCurr.map(point => rotate_axis(point, "x", delta))
-        const projectedPointsCurr = rotatedPointsCurr.map(point => project3dPoint(transposeZ(point)))
+        // if(!isFrontFacing(polygon,delta)){ 
+        //     continue;
+        // }
+        const pointsCurr = polygon.transformedPoints.map(point => point);
+        // let rotatedPointsCurr = pointsCurr.map(point => rotate_axis(point, "y", delta));
+        // rotatedPointsCurr = rotatedPointsCurr.map(point => rotate_axis(point, "x", delta))
+        const projectedPointsCurr = pointsCurr.map(point => project3dPoint((point)))
         const gradientForPolygon = ctx.createLinearGradient(cartesianToJSCoordinate(projectedPointsCurr[0]).x, cartesianToJSCoordinate(projectedPointsCurr[0]).y, cartesianToJSCoordinate(projectedPointsCurr[projectedPointsCurr.length - 1]).x, cartesianToJSCoordinate(projectedPointsCurr[projectedPointsCurr.length - 1]).y);
         for (let j = 0; j < projectedPointsCurr.length; j++) {
             const point = projectedPointsCurr[j];
@@ -250,6 +273,7 @@ function draw(delta = 0.01) {
         for (let j = 1; j < projectedPointsCurr.length; j++) {
             ctx.lineTo(cartesianToJSCoordinate(projectedPointsCurr[j]).x, cartesianToJSCoordinate(projectedPointsCurr[j]).y);
         }
+        // console.log(projectedPointsCurr);
         ctx.fill();
     }
 
@@ -265,10 +289,10 @@ function draw(delta = 0.01) {
 
     ctx.fillStyle = '#0f0';
     // use pageZoom to scale font size
-    ctx.font = `${16 / pageZoom}px monospace`;
+    ctx.font = `${16 *2* pageZoom}px monospace`;
     ctx.fillText(`FPS: ${fps}`, 10, 30);
 
-    requestAnimationFrame((time) => draw(time / 10000));
+    requestAnimationFrame(() => draw(delta + 0.01));
 }
 
 
