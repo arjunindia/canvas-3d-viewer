@@ -5,17 +5,13 @@ const canvas = display;
 const width = canvas.width;
 const height = canvas.height;
 
-let pageZoom = display.clientWidth / display.width;
-window.addEventListener('resize', () => {
-    pageZoom = display.clientWidth / display.width;
-});
-
+let pageZoom = 1
 const clipZ = 0.5
 const project3dPoint = ({ x, y, z }) => {
   const clippedZ = Math.max(z,clipZ)
     return {
-        x:  0.8 * x / clippedZ,
-        y:  0.8*y / clippedZ
+        x:  0.03 *x / clippedZ,
+        y:  0.03*y / clippedZ
     }
 
 }
@@ -52,8 +48,8 @@ function rotate_axis(point, axis, angle) {
 }
 
 
-const transposeZ = (point, delta = 20) => {
-    return { x: point.x, y: point.y, z: point.z + delta };
+const transposeZ = (point, delta = 0.0001) => {
+    return { x: point.x, y: point.y, z: 0 };
 }
 
 // const points = [
@@ -125,7 +121,7 @@ function isFrontFacing(polygon,delta) {
     
     const dot = normal.x * cameraDir.x + normal.y * cameraDir.y + normal.z * cameraDir.z;
     // return dot < 0;  // Negative = front-facing (normal towards camera) (too harsh)
-    return dot > 0;  // Positive = front-facing (normal towards camera) (more lenient)
+    return dot >0.005;
 }
 
 
