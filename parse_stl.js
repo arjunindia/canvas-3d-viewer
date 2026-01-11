@@ -1,3 +1,92 @@
+function isManifold(polygons) {
+    const edgeCount = new Map();
+    for (const polygon of polygons) {
+        const pts = polygon.points;
+        const edges = [
+            [pts[0], pts[1]],
+            [pts[1], pts[2]],
+            [pts[2], pts[0]]
+        ];
+        for (const edge of edges) {
+            const sortedEdge = edge[0] < edge[1] ? `${edge[0]}_${edge[1]}` : `${edge[1]}_${edge[0]}`;
+            edgeCount.set(sortedEdge, (edgeCount.get(sortedEdge) || 0) + 1);
+        }
+    }
+
+    for (const count of edgeCount.values()) {
+        if (count !== 2) {
+            return false;
+        }
+    }
+    return true;
+}
+const calculateModelDimensions = (points) => {
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
+    points.forEach(point => {
+        if (point.x < minX) minX = point.x;
+        if (point.x > maxX) maxX = point.x;
+        if (point.y < minY) minY = point.y;
+        if (point.y > maxY) maxY = point.y;
+        if (point.z < minZ) minZ = point.z;
+        if (point.z > maxZ) maxZ = point.z;
+    });
+    return {
+        width: maxX - minX,
+        height: maxY - minY,
+        depth: maxZ - minZ
+    };
+}
+
+const calculateModelCenter = (points) => {
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
+    points.forEach(point => {
+        if (point.x < minX) minX = point.x;
+        if (point.x > maxX) maxX = point.x;
+        if (point.y < minY) minY = point.y;
+        if (point.y > maxY) maxY = point.y;
+        if (point.z < minZ) minZ = point.z;
+        if (point.z > maxZ) maxZ = point.z;
+    });
+    return {
+        x: (minX + maxX) / 2,
+        y: (minY + maxY) / 2,
+        z: (minZ + maxZ) / 2
+    };
+}
+
+/**
+ * @typedef {Object} Point
+ * @property {number} x - X coordinate
+ * @property {number} y - Y coordinate
+ * @property {number} z - Z coordinate
+ */
+/**
+ * @typedef {Object} Dimensions
+ * @property {number} width - Width of the model
+ * @property {number} height - Height of the model
+ * @property {number} depth - Depth of the model
+ */
+
+/**
+ * Typedef for parsed STL result
+ * @typedef {Object} ParsedSTLResult
+ * @property {Array<Point>} points - Array of points in the STL file.
+ * @property {Array<Array<number>>} connections - Array of connections between points.
+ * @property {Array<Object>} polygons - Array of polygons defined by point indices.
+ * @property {boolean} isManifold - Indicates if the mesh is manifold.
+ * @property {Dimensions} dimensions - Dimensions of the model (width, height, depth).
+ * @property {Point} center - Center point of the model.
+ */
+
+/**
+ * Parses STL data (binary or ASCII) and returns points, connections, and polygons.
+ * @param {ArrayBuffer} data - The STL file data.
+ * @returns {ParsedSTLResult} The parsed STL result.
+ */
 function parseSTL(data) {
     const isBinary = ((data) => {
         const reader = new DataView(data);
@@ -113,7 +202,11 @@ function parseSTL(data) {
         }
     }
 
-    return { points, connections, polygons };
+    const manifold = isManifold(polygons);
+    const dimensions = calculateModelDimensions(points);
+    const center = calculateModelCenter(points);
+
+    return { points, connections, polygons , isManifold: manifold, dimensions: dimensions , center: center};
 }
 
 export { parseSTL };

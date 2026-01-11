@@ -59,6 +59,9 @@ const transposeZ = (point, delta = 110) => {
 const transposeY = (point, delta = 200) => {
     return { x: point.x, y: point.y + delta, z: point.z };
 }
+const transposeX = (point, delta = 200) => {
+    return { x: point.x + delta, y: point.y, z: point.z };
+}
 
 // const points = [
 //     { x: -0.5, y: -0.5, z: 0.5 },
@@ -106,7 +109,7 @@ const transposeY = (point, delta = 200) => {
 // ];
 
 function isFrontFacing(polygon) {
-    const transformedPoints = polygon.transformedPoints
+    const transformedPoints = polygon.transformedPoints;
     // let rotatedPointsCurr = pointsCurr.map(point => rotate_axis(point, "y", delta));
     // rotatedPointsCurr = rotatedPointsCurr.map(point => rotate_axis(point, "x", delta));
     
@@ -136,21 +139,60 @@ const v0 = transformedPoints[0];
 }
 
 
-const stlData = await fetch('models/low-poly-miku-hatsune.stl').then(res => res.arrayBuffer());
-const { points,connections,polygons } = parseSTL(stlData);
+// const stlData = await fetch('models/low-poly-miku-hatsune.stl').then(res => res.arrayBuffer());
+const stlData = await fetch('models/Utah_teapot_(solid).stl').then(res => res.arrayBuffer());
+const { points,connections,polygons,isManifold,dimensions,center } = parseSTL(stlData);
 
+// calculate z axis distance for zooming - larger models need to be further away
+const maxDimension = Math.max(dimensions.width, dimensions.height, dimensions.depth);
+const radius = maxDimension / 2;
+// Assuming a 60-degree Vertical FOV (common default)
+const verticalFOV_deg = 60; 
+
+// Convert the half-FOV to radians: (60 / 2) * (PI / 180)
+const halfFOV_rad = (verticalFOV_deg / 2) * (Math.PI / 180); 
+
+// Standard "Fit to View" formula: distance = Radius / tan(Half_FOV)
+let zDistance = radius / Math.tan(halfFOV_rad);
+
+// --- Optional: Add a small buffer for padding ---
+const paddingFactor = 1.2; // 20% extra distance for padding
+zDistance = zDistance * paddingFactor;
+
+console.log("Calculated Z-Axis Distance:", zDistance);
+
+const zoomFactor = zDistance;
+
+//calculate center offset to center model in view
+const centerOffset = {
+    x: -center.x,
+    y: -center.y,
+    z: -center.z
+}
+const applyCenterOffset = (point) => {
+    return {
+        x: point.x + centerOffset.x,
+        y: point.y + centerOffset.y,
+        z: point.z + centerOffset.z
+    };
+}
 
 // rotate the model to be upright, so 90 degrees around the x axis
 points.forEach((point, index) => {
     let rotatedPoint = rotate_axis(point, "x", Math.PI / 2);
-    let transformedPoint = transposeY(rotatedPoint, -80);
-    points[index] = transformedPoint;
+        rotatedPoint = transposeY(rotatedPoint, -10);
+    points[index] = rotatedPoint;
 });
 polygons.forEach((polygon) => {
     let rotatedNormal = rotate_axis(polygon.normal, "x", Math.PI / 2);
-    let transformedNormal = rotate_axis(rotatedNormal, "y", 0);
+    rotatedNormal = transposeX(rotatedNormal, centerOffset.x);
+    rotatedNormal = transposeY(rotatedNormal, centerOffset.y);
+    const transformedNormal = transposeZ(rotatedNormal, centerOffset.z);
     polygon.normal = transformedNormal;
 });
+
+
+
 
 // const findClosedConnections = (connections) => {
 //     const visited = new Set();
@@ -197,9 +239,9 @@ let fps = 0;
  */
 function draw(delta = 0.01) {
     ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, width, height);
-    ctx.fillStyle = '#fff';
+    // ctx.fillStyle = '#000';
+    // ctx.fillRect(0, 0, width, height);
+    // ctx.fillStyle = '#fff';
     // for (let i = 0; i < points.length; i++) {
     //     const point = points[i];
     //     let rotatedPoint = rotate_axis(point, "y", delta)
@@ -243,10 +285,12 @@ function draw(delta = 0.01) {
 
         // B. Apply Rotations (Must match exactly!)
         let transformedPoints = originalPoints.map(point => rotate_axis(point, "y", delta));
-        // transformedPoints = transformedPoints.map(point => rotate_axis(point, "x", delta)); // Commented out to match your code
+        // transformedPoints = transformedPoints.map(point => rotate_axis(point, "x", delta)); 
 
+        // apply center offset
+        transformedPoints = transformedPoints.map(point => applyCenterOffset(point));
         // C. Apply Z Translation (Camera move)
-        transformedPoints = transformedPoints.map(point => transposeZ(point));
+        transformedPoints = transformedPoints.map(point => transposeZ(point, zoomFactor));
         // D. Calculate Average Z (Depth) of this transformed polygon
         const avgZ = transformedPoints.reduce((acc, p) => acc + p.z, 0) / transformedPoints.length;
         const projected2DPoints = transformedPoints.map(p => 
@@ -255,31 +299,37 @@ function draw(delta = 0.01) {
         const cartesian2DPoints = projected2DPoints.map(p => 
             (cartesianToJSCoordinate(p))
         );
+
+        const gradientForPolygon = ctx.createLinearGradient(cartesian2DPoints[0].x, cartesian2DPoints[0].y, cartesian2DPoints[1].x, cartesian2DPoints[1].y);
+        //create color stops for each point in the polygon
+        for (let j = 0; j < projected2DPoints.length; j++) {
+            const point = projected2DPoints[j];
+            let stop = `hsl(${Math.round(360 * point.x)}, 100%, 50%)`;
+            gradientForPolygon.addColorStop(j / projected2DPoints.length, stop);
+        }
+
         return {
             originalPolygon: polygon, // Keep ref if needed
-            // transformedPoints: transformedPoints, // STORE THIS so we don't recalculate
+            transformedPoints: transformedPoints, // STORE THIS so we don't recalculate
             projected2DPoints: projected2DPoints,
             cartesian2DPoints: cartesian2DPoints,
+            gradientForPolygon: gradientForPolygon,
             depth: avgZ
         };
     });
-    renderablePolygons.sort((a, b) => b.depth - a.depth);
+    renderablePolygons.sort((a, b) => b.depth - a.depth)
     for (let i = 0; i < renderablePolygons.length; i++) {
 
         const polygon = renderablePolygons[i];
-        // if(!isFrontFacing(polygon)){ 
-        //     continue;
-        // }
+        if(isManifold && !isFrontFacing(polygon)){
+            continue;
+        }
+    
         // const pointsCurr = polygon.transformedPoints
         // let rotatedPointsCurr = pointsCurr.map(point => rotate_axis(point, "y", delta));
         // rotatedPointsCurr = rotatedPointsCurr.map(point => rotate_axis(point, "x", delta))
         const projectedPointsCurr = polygon.projected2DPoints
-        const gradientForPolygon = ctx.createLinearGradient(polygon.cartesian2DPoints[0].x, polygon.cartesian2DPoints[0].y, polygon.cartesian2DPoints[1].x, polygon.cartesian2DPoints[1].y);
-        for (let j = 0; j < projectedPointsCurr.length; j++) {
-            const point = projectedPointsCurr[j];
-            let stop = `hsl(${Math.round(360 * point.x)}, 100%, 50%)`;
-            gradientForPolygon.addColorStop(j / projectedPointsCurr.length, stop);
-        }
+        const gradientForPolygon = polygon.gradientForPolygon;
         ctx.fillStyle = gradientForPolygon;
         ctx.beginPath();
         ctx.moveTo(polygon.cartesian2DPoints[0].x, polygon.cartesian2DPoints[0].y);
@@ -305,7 +355,8 @@ function draw(delta = 0.01) {
     ctx.font = `${16 *4* pageZoom}px monospace`;
     ctx.fillText(`FPS: ${fps}`, 10, 50);
 
-    requestAnimationFrame(() => draw(delta + 0.01));
+    setTimeout(() =>
+        draw(delta + 0.01), 1000 / 60);
 }
 
 
