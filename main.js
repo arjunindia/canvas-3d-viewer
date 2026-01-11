@@ -1,9 +1,14 @@
 import { parseSTL } from "./parse_stl.js";
 
+/**@type {CanvasRenderingContext2D} */
 const ctx = display.getContext('2d');
 const canvas = display;
 const width = canvas.width;
 const height = canvas.height;
+ctx.imageSmoothingQuality = 'high';
+ctx.imageSmoothingEnabled = true;
+ctx.textRendering = 'optimizeSpeed';
+ctx.drawFocusIfNeeded
 
 let pageZoom = window.devicePixelRatio || 1;
 const clipZ = 0.5
@@ -48,7 +53,7 @@ function rotate_axis(point, axis, angle) {
 }
 
 
-const transposeZ = (point, delta = 120) => {
+const transposeZ = (point, delta = 110) => {
     return { x: point.x, y: point.y, z: point.z + delta };
 }
 const transposeY = (point, delta = 200) => {
@@ -100,15 +105,14 @@ const transposeY = (point, delta = 200) => {
 //     [8, 9], [9, 10], [10, 11], [11, 8] // Third loop
 // ];
 
-function isFrontFacing(polygon,delta) {
-    const pointsCurr = polygon.points.map(index => points[index]);
-    let rotatedPointsCurr = pointsCurr.map(point => rotate_axis(point, "y", delta));
-    rotatedPointsCurr = rotatedPointsCurr.map(point => rotate_axis(point, "x", delta));
+function isFrontFacing(polygon) {
+    const transformedPoints = polygon.transformedPoints
+    // let rotatedPointsCurr = pointsCurr.map(point => rotate_axis(point, "y", delta));
+    // rotatedPointsCurr = rotatedPointsCurr.map(point => rotate_axis(point, "x", delta));
     
-    // Compute normal using cross product of two edges
-    const v0 = rotatedPointsCurr[0];
-    const v1 = rotatedPointsCurr[1];
-    const v2 = rotatedPointsCurr[2];
+const v0 = transformedPoints[0];
+    const v1 = transformedPoints[1];
+    const v2 = transformedPoints[2];
     
     const edge1 = { x: v1.x - v0.x, y: v1.y - v0.y, z: v1.z - v0.z };
     const edge2 = { x: v2.x - v0.x, y: v2.y - v0.y, z: v2.z - v0.z };
@@ -120,11 +124,15 @@ function isFrontFacing(polygon,delta) {
     };
     
     // Camera at origin looking down -Z axis (adjust if different)
-    const cameraDir = { x: 0, y: 0, z: -1 };
+   const viewVector = v0;
     
-    const dot = normal.x * cameraDir.x + normal.y * cameraDir.y + normal.z * cameraDir.z;
-    // return dot < 0;  // Negative = front-facing (normal towards camera) (too harsh)
-    return dot <= 0;  // Negative = front-facing (normal towards camera)
+    // Dot product to determine facing
+    const dotProduct = 
+        normal.x * viewVector.x + 
+        normal.y * viewVector.y + 
+        normal.z * viewVector.z;
+
+    return dotProduct < 0; // Front-facing if dot product is negative
 }
 
 
@@ -135,7 +143,7 @@ const { points,connections,polygons } = parseSTL(stlData);
 // rotate the model to be upright, so 90 degrees around the x axis
 points.forEach((point, index) => {
     let rotatedPoint = rotate_axis(point, "x", Math.PI / 2);
-    let transformedPoint = transposeY(rotatedPoint, -70);
+    let transformedPoint = transposeY(rotatedPoint, -80);
     points[index] = transformedPoint;
 });
 polygons.forEach((polygon) => {
@@ -241,37 +249,42 @@ function draw(delta = 0.01) {
         transformedPoints = transformedPoints.map(point => transposeZ(point));
         // D. Calculate Average Z (Depth) of this transformed polygon
         const avgZ = transformedPoints.reduce((acc, p) => acc + p.z, 0) / transformedPoints.length;
-
+        const projected2DPoints = transformedPoints.map(p => 
+            (project3dPoint(p))
+        );
+        const cartesian2DPoints = projected2DPoints.map(p => 
+            (cartesianToJSCoordinate(p))
+        );
         return {
             originalPolygon: polygon, // Keep ref if needed
-            transformedPoints: transformedPoints, // STORE THIS so we don't recalculate
+            // transformedPoints: transformedPoints, // STORE THIS so we don't recalculate
+            projected2DPoints: projected2DPoints,
+            cartesian2DPoints: cartesian2DPoints,
             depth: avgZ
         };
     });
-   const sortedPolygons = renderablePolygons.toSorted((a, b) => b.depth - a.depth);
-    for (let i = 0; i < sortedPolygons.length; i++) {
-        
-        const polygon = sortedPolygons[i];
-        // if(!isFrontFacing(polygon,delta)){ 
+    renderablePolygons.sort((a, b) => b.depth - a.depth);
+    for (let i = 0; i < renderablePolygons.length; i++) {
+
+        const polygon = renderablePolygons[i];
+        // if(!isFrontFacing(polygon)){ 
         //     continue;
         // }
-        const pointsCurr = polygon.transformedPoints.map(point => point);
+        // const pointsCurr = polygon.transformedPoints
         // let rotatedPointsCurr = pointsCurr.map(point => rotate_axis(point, "y", delta));
         // rotatedPointsCurr = rotatedPointsCurr.map(point => rotate_axis(point, "x", delta))
-        const projectedPointsCurr = pointsCurr.map(point => project3dPoint((point)))
-        const gradientForPolygon = ctx.createLinearGradient(cartesianToJSCoordinate(projectedPointsCurr[0]).x, cartesianToJSCoordinate(projectedPointsCurr[0]).y, cartesianToJSCoordinate(projectedPointsCurr[projectedPointsCurr.length - 1]).x, cartesianToJSCoordinate(projectedPointsCurr[projectedPointsCurr.length - 1]).y);
+        const projectedPointsCurr = polygon.projected2DPoints
+        const gradientForPolygon = ctx.createLinearGradient(polygon.cartesian2DPoints[0].x, polygon.cartesian2DPoints[0].y, polygon.cartesian2DPoints[1].x, polygon.cartesian2DPoints[1].y);
         for (let j = 0; j < projectedPointsCurr.length; j++) {
             const point = projectedPointsCurr[j];
-            let stop1 = `hsl(${Math.round(360 * point.x)}, 100%, 50%)`;
-            let stop2 = `hsl(${Math.round(360 * point.x)}, 100%, 50%)`;
-            gradientForPolygon.addColorStop(j / projectedPointsCurr.length, stop1);
-            gradientForPolygon.addColorStop(j / projectedPointsCurr.length, stop2);
+            let stop = `hsl(${Math.round(360 * point.x)}, 100%, 50%)`;
+            gradientForPolygon.addColorStop(j / projectedPointsCurr.length, stop);
         }
         ctx.fillStyle = gradientForPolygon;
         ctx.beginPath();
-        ctx.moveTo(cartesianToJSCoordinate(projectedPointsCurr[0]).x, cartesianToJSCoordinate(projectedPointsCurr[0]).y);
+        ctx.moveTo(polygon.cartesian2DPoints[0].x, polygon.cartesian2DPoints[0].y);
         for (let j = 1; j < projectedPointsCurr.length; j++) {
-            ctx.lineTo(cartesianToJSCoordinate(projectedPointsCurr[j]).x, cartesianToJSCoordinate(projectedPointsCurr[j]).y);
+            ctx.lineTo(polygon.cartesian2DPoints[j].x, polygon.cartesian2DPoints[j].y);
         }
         // console.log(projectedPointsCurr);
         ctx.fill();
@@ -289,8 +302,8 @@ function draw(delta = 0.01) {
 
     ctx.fillStyle = '#0f0';
     // use pageZoom to scale font size
-    ctx.font = `${16 *2* pageZoom}px monospace`;
-    ctx.fillText(`FPS: ${fps}`, 10, 30);
+    ctx.font = `${16 *4* pageZoom}px monospace`;
+    ctx.fillText(`FPS: ${fps}`, 10, 50);
 
     requestAnimationFrame(() => draw(delta + 0.01));
 }
